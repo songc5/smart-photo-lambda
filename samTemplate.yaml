@@ -5,7 +5,7 @@ Resources:
   CDDemoLambda:
     Type: 'AWS::Serverless::Function'
     Properties:
-      FunctionName: LF2
+      FunctionName: lambda_function
       Handler: lambda_function.lambda_handler
       Runtime: python3.9
       CodeUri: .
