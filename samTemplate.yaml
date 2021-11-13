@@ -13,6 +13,12 @@ Resources:
       MemorySize: 128
       Timeout: 30
       Role: 'arn:aws:iam::574875490087:role/service-role/index-photos-role-0xtl6p49'
+      Events:
+        toS3:
+          Type: Api
+          Properties:
+            Path: /{bucket}
+            Method: get
       Environment:
         Variables:
           REGION: us-east-1
