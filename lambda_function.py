@@ -1,129 +1,84 @@
 import json
 import boto3
-import datetime
+import uuid
 import requests
 from requests_aws4auth import AWS4Auth
+import base64
 
-def getS3key(event):
-    image_name = event['Records'][0]['s3']['object']['key']
-    print(image_name)
-    res = {
-        'S3Object': {
-            'Bucket': 'photosbucket112',
-            'Name': image_name
-            }
-        }
-    return image_name
-    
-    
-def get_time(event):
-    time = event['Records'][0]['eventTime']
-    return time
 
-def get_labels(client, image_name):
-    in_put = {
-        'S3Object': {
-            'Bucket': 'photosbucket112',
-            'Name': image_name
-            }
-        }
-    response = client.detect_labels(Image = in_put, MinConfidence = 90)
-    labels = [x["Name"] for x in response["Labels"]]
-    return labels
 
-def get_head(client, image_name):
-    response = client.head_object(Bucket='photosbucket112', Key=image_name)
-    print(response)
+def send_to_lex(query, userId):
+    # send query message to lex, get response and extract slots
+    lex = boto3.client('lex-runtime')
+    response = lex.post_text(
+        botName='lexbot',
+        botAlias='lexbot',
+        userId=str(userId),
+        sessionAttributes={
+            #'string': 'string'
+        },
+        inputText=query
+        )
     # print(response)
-    customLabels = None
-    if len(response["Metadata"]) != 0:
-        customLabels = response["Metadata"]['customlabels'].split(',')
-    # createdTime = response["LastModified"].strftime("%Y-%m-%%dT%H:%M:%S")
-    return customLabels
-    
-    
-def get_json_formate(key, time, lables):
-    res = {
-            'objectKey': key,
-            'bucket': 'photosbucket112',
-            'createdTimestamp': time,
-            'labels': lables
-        }
-    # json_string = json.dumps(res)
-    return res
+    keys = [x for x in response['slots'].values() if x]
+    # print(keys)
+    return keys
 
 
-def send_to_elastic(value):
-    region = 'us-east-1'
+def elastic_search(labels):
+    # to do: return list of image names
+    region = 'us-east-1' # For example, us-west-1
     service = 'es'
-    awsauth = AWS4Auth('AKIAYLWJ724TXRNERBOY', '3RuWkHalS9kHwJcpHyNjivbOGFuoSGScJvefMJyy', region, service)
-    host = 'https://search-photos-fryaeg5aafmsirrempdlfkmz4a.us-east-1.es.amazonaws.com'
+    awsauth = AWS4Auth('', '', region, service)
+    host = 'https://search-photos-fryaeg5aafmsirrempdlfkmz4a.us-east-1.es.amazonaws.com' 
     index = 'photos'
-    type = '_doc'
-    url = host + '/' + index + '/' + type
+    url = host + '/' + index + '/_search'
     headers = { "Content-Type": "application/json" }
-    r = requests.post(url, auth=awsauth, json=value, headers=headers)
-    return r.text
-    
+    res = []
+    for l in labels:
+        query = {
+        "size": 100,
+        "query": {
+            "multi_match": {
+                "query":    l, 
+                }
+            }
+        }
+        r = requests.get(url, auth=awsauth, headers=headers, data=json.dumps(query))
+        data = json.loads(r.text)['hits']['hits']
+        res.append(data)
+    # print("data is")
+    # print(data)
+    names = get_names(res)
+    return list(names)
 
+def get_names(response):
+    names = []
+    for label_response in response:
+        for label in label_response:
+            name = label["_source"]["objectKey"]
+            names.append(name)
+    return set(names)
+
+def get_photos_from_s3(photos):
+    binary_photos = []
+    s3 = boto3.client('s3')
+    for p in photos:
+        fileObj = s3.get_object(Bucket = 'photosbucket112', Key = p)
+        file_content = fileObj['Body'].read()
+        binary_photos.append(base64.b64encode(file_content))
+        # binary_photos.append(file_content)
+    return binary_photos
 def lambda_handler(event, context):
-    # test()
-    # return None
-#     event = {'Records': 
-# 	[
-# 		{
-# 		'eventVersion': '2.1', 
-# 		'eventSource': 'aws:s3', 
-# 		'awsRegion': 'us-east-1', 
-# 		'eventTime': '2021-11-04T15:01:53.073Z', 
-# 		'eventName': 'ObjectCreated:Put', 
-# 		'userIdentity': {'principalId': 'AWS:AIDAYLWJ724TTJ34U4WKS'}, 
-# 		'requestParameters': {'sourceIPAddress': '198.254.113.87'}, 
-# 		'responseElements': {'x-amz-request-id': 'W3EC6MJW812B3T2D', 'x-amz-id-2': 'v0MQXIRd5M5jOd0wDZdsc4DOZCUHJO6extC25YMRVrLbnbAZ2BKolvzWUwOfnd/IGHRu4Hd7uRoduyao9hdo2fBnEmruFteN'}, 
-# 		's3': {
-# 			's3SchemaVersion': '1.0', 
-# 			'configurationId': 'da2f2828-4be1-4c88-81f9-a95d33d39328', 
-# 			'bucket': {'name': 'photosbucket112', 'ownerIdentity': {'principalId': 'A32Z92TT1PWIU'}, 'arn': 'arn:aws:s3:::photosbucket112'}, 
-# 			'object': {'key': 'apitest2_meta.png', 'size': 12459, 'eTag': '8882dd469d875a2f1476e112b25a9939', 'sequencer': '006183F5E10B408B6B'}
-# 			}
-# 		}
-# 	]
-# }
-    
-    image = getS3key(event)
-    created_time = get_time(event)
-    client = boto3.client("rekognition")
-    raw_labels = get_labels(client, image)
-    client2 = boto3.client("s3")
-    custom_labels = get_head(client2, image)
-    
-    labels = raw_labels
-    if custom_labels:
-        labels = raw_labels+custom_labels
-    
-    # TODO implement
-    print('triggered')
-    print(labels)
-    store_json = get_json_formate(image, created_time, labels)
-    print('______________')
-    print(store_json)
-    
-    #send json to elastic search
-    tp = send_to_elastic(store_json)
-    print(tp)
-    return {
-        'statusCode': 200,
-        'body': json.dumps('Hello from Lambda!')
-    }
+   
+    # event={'body-json': {}, 'params': {'path': {'bucket': 'photosbucket112'}, 'querystring': {'query_text': 'show me moon'}, 'header': {'Accept': '*/*', 'Accept-Encoding': 'gzip, deflate, br', 'Host': '2f2oruw7m3.execute-api.us-east-1.amazonaws.com', 'Postman-Token': '1da32d66-4566-40c0-b13c-e39cdbe2f85e', 'User-Agent': 'PostmanRuntime/7.28.4', 'x-amz-meta-customLabels': 'm1,m3', 'X-Amzn-Trace-Id': 'Root=1-61875336-433dad25722a06f74861abbd', 'X-Forwarded-For': '198.254.113.88', 'X-Forwarded-Port': '443', 'X-Forwarded-Proto': 'https'}}, 'stage-variables': {}, 'context': {'account-id': '', 'api-id': '2f2oruw7m3', 'api-key': '', 'authorizer-principal-id': '', 'caller': '', 'cognito-authentication-provider': '', 'cognito-authentication-type': '', 'cognito-identity-id': '', 'cognito-identity-pool-id': '', 'http-method': 'GET', 'stage': 'dev', 'source-ip': '198.254.113.88', 'user': '', 'user-agent': 'PostmanRuntime/7.28.4', 'user-arn': '', 'request-id': '37d7937a-4b75-407c-9d9c-09bd4db8f1d2', 'resource-id': 'xqq0m4', 'resource-path': '/{bucket}'}}
 
-def test():
-    client2 = boto3.client("s3")
-    time, res = get_head(client2, 'img2.png')
-    print(res)
-    print(time)
-
-def test2():
-    client = boto3.client("rekognition")
-    raw_labels = get_labels(client, 'img2.png')
-    print(raw_labels)
-    
+    query = event['params']['querystring']['query_text']
+    # print(query)
+    userId = str(uuid.uuid1())
+    labels = send_to_lex(query, userId)
+    photo_names = elastic_search(labels)
+    print(photo_names)
+    print('__________________________')
+    res = get_photos_from_s3(photo_names)
+    return res
