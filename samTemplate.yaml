@@ -22,3 +22,8 @@ Resources:
       Environment:
         Variables:
           REGION: us-east-1
+      Policies:
+        - AWSLambdaExecute
+        - CloudWatchLogsFullAccess
+        - AmazonRekognitionFullAccess
+        - AmazonLexFullAccess
