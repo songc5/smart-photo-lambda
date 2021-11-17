@@ -68,6 +68,7 @@ def send_to_elastic(value):
     
 
 def lambda_handler(event, context):
+    print(event)
     image = getS3key(event)
     created_time = get_time(event)
     client = boto3.client("rekognition")
